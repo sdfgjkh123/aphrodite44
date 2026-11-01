@@ -1,0 +1,16 @@
+packages:
+  - "!**/Target/**"
+
+preferWorkspacePackages: true
+
+linkWorkspacePackages: deep
+
+minimumReleaseAge: 0
+
+nodeLinker: hoisted
+
+allowBuilds:
+  "@firebase/util": true
+  esbuild: true
+  protobufjs: true
+  puppeteer: true

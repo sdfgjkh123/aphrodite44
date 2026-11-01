@@ -1,0 +1,221 @@
+# ── Aphrodite Configuration ────────────────────────────────────────────────
+# Copy this file to aphrodite.toml and edit to your needs.
+# Priority (a subset of fields only - see docs/config/env-vars.md):
+# env var > aphrodite.toml > hardcoded default.
+#
+# Search order: ./aphrodite.toml, then ~/.hermes/aphrodite/aphrodite.toml
+# (only when APHRODITE_CONFIG_PATH is NOT set - an explicit override that
+# doesn't exist falls through to single-proxy CLI-flag mode instead).
+#
+# Two independent parsers read this file:
+#   - the Rust HTTP proxy (config/proxy.rs, when an aphrodite.toml is found):
+#     [[proxies]], [defaults], the four hot-reload thresholds plus
+#     auto_expand/auto_expand_limit/max_request_body_size in [compression],
+#     and [previews] preview_max_chars (also re-applied by POST /reload and
+#     the config-file watcher);
+#   - the Hermes dylib session (config_loader.rs): the [compression]
+#     engine/chain-split/poll/live_container/recursive_depth keys, [defaults]
+#     model/api_url, [flow], [directives], [prompts] session_inject +
+#     retrieve_guidance/ccr_marker_hint/catalog_intent_hints, [templates],
+#     [previews] preview_max_chars.
+#
+# Everything below is pre-configured: every section a parser reads is present
+# with its current default. `aphrodite setup` writes the same structure (with
+# {cache_port}/{token_port} placeholders) from the embedded template.
+#
+# Keys marked "DOCUMENTED BUT UNWIRED" are parsed but have no consumer -
+# setting them is a silent no-op (kept for forward compatibility; see
+# docs/config/env-vars.md "Documented but currently inactive").
+
+# ── Proxies ─────────────────────────────────────────────────────────────────
+# `listen` binds loopback-only by default (report 12 F2) - the router already
+# rejects non-loopback peers on everything except /health, but binding
+# 0.0.0.0 still needlessly exposes an unauthenticated listener to your LAN.
+# Uncomment the 0.0.0.0 lines only if you deliberately want another machine
+# on your network to reach this proxy - understand that /retrieve, /history,
+# and /ccr/* have no authentication of their own.
+[[proxies]]
+name = "cache"
+listen = "127.0.0.1:9797"
+# listen = "0.0.0.0:9797"  # WARNING: exposes proxy to your network
+mode = "cache"
+tool_relay = true
+timeout = 120
+
+[[proxies]]
+name = "token"
+listen = "127.0.0.1:9798"
+# listen = "0.0.0.0:9798"  # WARNING: exposes proxy to your network
+mode = "token"
+tool_relay = true
+timeout = 300
+
+# ── Shared defaults (applied to all proxies unless overridden) ──────────────
+[defaults]
+# Upstream API base URL and model name. Priority:
+#   APHRODITE_API_URL / APHRODITE_MODEL env vars
+#     > per-proxy api_url / model ([[proxies]])
+#     > these defaults
+#     > binary fallback (https://api.openai.com / "default-model"; the dylib
+#       session falls back to "gpt-4o" / empty URL when these keys are absent).
+# Optional per-proxy overrides ([[proxies]], parsed by the proxy path):
+# api_key, api_url, model, ccr_ttl_seconds, ccr_db_path, notify_url,
+# notify_key, dev, max_context, max_output, timeout, tool_relay - see
+# docs/config/env-vars.md for the env-var equivalents.
+# `aphrodite setup --api-url/--model` are accepted but do NOT rewrite these
+# keys (setup substitutes only {cache_port}/{token_port}); set the env vars
+# or edit this file instead.
+api_url = "https://api.openai.com"
+model = "default-model"
+ccr_ttl_seconds = 3600
+# api_key precedence: proxy-level api_key > [defaults] api_key >
+# APHRODITE_API_KEY env var. Only uncomment if you cannot use the env var:
+# api_key = "sk-..."
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  COMPRESSION  -  thresholds, engine, auto-expand, live containers, recursion caps, classifier poll
+# ══════════════════════════════════════════════════════════════════════════════
+# Proxy path consumes: tool_threshold_token, tool_threshold_cache,
+# inline_threshold, code_multiplier (env > TOML > compiled-in default; the
+# last four hot-reload - edit + save, or POST /reload, with no restart),
+# auto_expand, auto_expand_limit, max_request_body_size.
+# Dylib path consumes: context_engine, engine_* (load-bearing),
+# terminal_threshold, poll_worker, auto_reload, chain_split,
+# chain_split_min/max_segments, live_container, recursive_depth.
+# Only catalog_mode and classifier_poll in this section are parsed-but-unwired
+# (see the per-key annotations below).
+[compression]
+engine_threshold_pct = 30   # LOAD-BEARING (dylib): % of context filled before middle-turn archiving + engine_offload prompt; 100+ = documented engine-off escape hatch
+engine_protect_first = 2    # LOAD-BEARING (dylib): messages to keep at start
+engine_protect_last = 5     # LOAD-BEARING (dylib): messages to keep at end
+engine_min_msgs = 8         # LOAD-BEARING (dylib): minimum messages before the engine activates
+tool_threshold_token = 256  # token proxy threshold (bytes) - lower = compress more (hot-reloads)
+tool_threshold_cache = 2048 # cache proxy threshold (bytes) - lower = compress more (hot-reloads)
+terminal_threshold = 256    # dylib terminal-output threshold (bytes); proxy path parses-only
+inline_threshold = 1024     # inline zlib fallback threshold (bytes) (hot-reloads)
+auto_expand = true          # WIRED (proxy): resolve just-stored content inline instead of emitting a marker (env APHRODITE_AUTO_EXPAND > TOML > default false)
+auto_expand_limit = 102400  # WIRED (proxy): byte cap for auto-expanded content; 0 = unlimited (env APHRODITE_AUTO_EXPAND_LIMIT > TOML > default 102400)
+live_container = false      # WIRED (dylib): instant 'live' CCR markers for large tool results (progressive chunked retrieval + ETA); env APHRODITE_LIVE_CONTAINER > TOML > default false
+recursive_depth = 5         # WIRED (dylib): max nested expansion depth; env APHRODITE_RECURSIVE_DEPTH > TOML > default 5
+# max_request_body_size = 10485760   # WIRED (proxy): optional request-body cap in bytes; unset = no cap (env APHRODITE_MAX_REQUEST_BODY_SIZE)
+catalog_mode = "tool"       # DOCUMENTED BUT UNWIRED: parsed (echoed by POST /reload), no consumer - catalog layout is compiled-in
+classifier_poll = true      # DOCUMENTED BUT UNWIRED: parsed, no reader (CCR skipping is not keyed on this flag)
+code_multiplier = 1.0       # multiply threshold for code types (hot-reloads); 1.0 = code at base threshold (max compression)
+context_engine = true       # dylib-path only (aphrodite_stats/config_get/set,
+# aphrodite_dispatch) - a status flag exposed by
+# the C-ABI/Hermes bridge; the standalone HTTP
+# proxy (main.rs/proxy.rs) never reads it and has
+# no gated behavior tied to this key
+poll_worker = true          # dylib-path: enable auto-backgrounding of slow tool calls
+auto_reload = true          # dylib-path: watch aphrodite.toml and re-apply config fields on change (session CCR state is never touched - only config fields)
+chain_split = false         # dylib-path: opt-in fine-grained command splitting (SEG_MARKER segments); OFF by default (markers pollute redirected stdout)
+chain_split_min_segments = 2 # dylib-path: floor for the adaptive chain-split threshold (min 2)
+chain_split_max_segments = 6 # dylib-path: cap for the adaptive chain-split threshold
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PREVIEWS  -  model-aware templates, code structure maps
+# ══════════════════════════════════════════════════════════════════════════════
+[previews]
+model_family = "code_first" # WIRED as the [templates.preview] family selector (default "code_first"); only matters when [templates] is configured - absent templates fall back to hardcoded builders
+code_structure_map = true   # DOCUMENTED BUT UNWIRED: parsed, no consumer
+preview_max_chars = 0       # caps the whole rendered preview STRING, not per line; 0 = unlimited - previews render at full natural length (env APHRODITE_PREVIEW_MAX_CHARS > TOML > default)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PROMPTS  -  how the system instructs the LLM about CCR
+# ══════════════════════════════════════════════════════════════════════════════
+[prompts]
+retrieve_guidance = "minimal" # WIRED: prompt knob - how the system instructs the LLM about CCR retrieval
+ccr_marker_hint = false       # WIRED: prompt knob - marker hint shown to the LLM
+catalog_intent_hints = false  # WIRED: prompt knob - per-intent catalog hints
+# First-turn session orientation injected by pre_llm_call on turn 0 (dylib
+# path only). Ships a default when this key is absent (see
+# crates/aphrodite/src/flow.rs). Set to "" to disable entirely.
+session_inject = """
+[APHRODITE] CCR active. Tool output > threshold → <<<CCR:hash|type|size>>>.
+Markers ARE the content, compressed. A marker's `size` is its retrieval cost:
+resolving it re-adds that many bytes to context. Price each retrieval against
+the next action - retrieve only markers whose content you will actually
+consume; defer the rest (markers persist and stay retrievable; batch the ones
+you need into one turn). Judge from the preview + type + size: for most types
+the preview answers the structural question (succeeded? which files? how
+many? what shape?). Never re-read a file you hold a marker for; never invent
+content you did not retrieve.
+OPERATING RULES (token-efficiency):
+- Branch on STRUCTURED exit signals only: tool `exit_code`, `error` fields,
+  and command `EXIT:$?` prints. Never infer success/failure by scanning
+  human-readable text (e.g. "behind/ahead", "error:", banners).
+- Write commands to be machine-checkable: end with `; echo "EXIT:$?"` and
+  use `test -f`/`grep -q` so the exit code is the source of truth.
+- Keep prose minimal. No declarative status paragraphs. Act, then report
+  the single decisive fact (exit code / hash / file path).
+- Batch independent reads; retrieve the CCR markers you need in one turn.
+"""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TEMPLATES  -  customizable format strings
+# ══════════════════════════════════════════════════════════════════════════════
+# Optional `[templates]` section: preview families, the marker block, prompt
+# templates, and the reverse key map. Absent = hardcoded builders/defaults.
+# Resolution order per preview: family[ctype] -> reverse[ctype] ->
+# family[_default] -> hardcoded builder. Source of truth:
+# crates/aphrodite/src/templates.rs.
+# Preview variables (brace-wrapped in format strings): {type} {ln} {size}
+# {first} {err} {warn} {msg} {exit} {cmd} {files} {fn} {plus} {minus} {keys}
+# {items} {commit} {hash} {subject} {pid} {uptime} {fns} {structs} {impls}
+# {classes} {sigs} {code} {loc} {errors} {total} {sig1} {fx} {cmx}.
+# Marker variables: {preview} {type} {meta} {center} {center_seg} {hash}
+# {size} {hint}.
+# Prompt templates: session_inject (user-facing), engine_offload (vars
+# {hash} {tail}), auto_expand_guidance (internal). Unknown variables degrade
+# to the empty string.
+
+# Example:
+# [templates.preview.code_first]
+# code = "[{type}:{fns}fns|{structs}structs {sigs} {ln}L]"
+# [templates.marker]
+# format = "{preview}\n[{type}: {meta}{center_seg}]\n<<<CCR:{hash}|{type}|{size}>>>"
+# hint = "…(use aphrodite_retrieve)"
+# [templates.prompts]
+# session_inject = "CCR markers (<<<CCR:hash|type|size>>>) are compressed content…"
+# [templates.reverse]
+# build_output = "build_output"
+[templates]
+# preview.<family>.<ctype> = "format string"
+# [templates.preview.compact]
+# diff = "[diff:{files}f +{plus}/-{minus} {ln}L{fx}{fn}]"
+# [templates.preview.code_first]
+# code = "[{type}:{fns}fns|{structs}structs {sigs} {ln}L]"
+# [templates.marker]
+# format = "{preview}\n[{type}: {meta}{center_seg}]\n<<<CCR:{hash}|{type}|{size}>>>"
+# hint = "…(use aphrodite_retrieve)"
+# [templates.prompts]
+# session_inject = "CCR markers (<<<CCR:hash|type|size>>>) are compressed content…"
+# [templates.reverse]
+# build_output = "build_output"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DIRECTIVES  -  conversational behavioral context (swappable .md files)
+# ══════════════════════════════════════════════════════════════════════════════
+[directives]
+# Active directives loaded from directives/*.md at startup (dylib path).
+# Built-in set (baked into the binary): focus, foresight, ccr-handling,
+# cleanup, explore, lazy, lazy-eval.
+# Swap mid-conversation via aphrodite_directive("swap", "explore").
+# An empty list seeds focus + foresight + lazy from the loaded set.
+active = ["lazy", "lazy-eval", "foresight"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  FLOW  -  per-turn injected-context assembler (report 05)
+# ══════════════════════════════════════════════════════════════════════════════
+[flow]
+# Hard cap for ALL per-turn injected context (directives + nudges + recall
+# catalog + retrieve hint). Kept below Hermes's 10k-char spill threshold so the
+# catalog is never spill-mangled. Sections drop bottom-up when over budget;
+# directives and nudges never drop. Env: APHRODITE_FLOW_BUDGET_CHARS.
+budget_chars = 2600

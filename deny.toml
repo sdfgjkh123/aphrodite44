@@ -1,0 +1,74 @@
+# cargo-deny configuration for Aphrodite.
+#
+# Usage:
+#   cargo install cargo-deny
+#   cargo deny check advisories
+#   cargo deny check licenses
+#   cargo deny check bans
+#   cargo deny check sources
+#
+# CI integration: run `cargo deny check` as part of CI precheck.
+
+[advisories]
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+ignore = [
+	# paste is unmaintained (archived by author) with no safe upgrade
+	# available; it's a transitive compile-time dep of tokenizers/fastembed.
+	"RUSTSEC-2024-0436",
+	# smartstring is unmaintained (all versions affected, no safe upgrade);
+	# it's a transitive dep of rhai_codegen (the opt-in scripting engine).
+	"RUSTSEC-2026-0249",
+]
+
+[licenses]
+# Aphrodite is CC0-1.0. Allowed licenses for dependencies. This list is a
+# strict allowlist: anything not listed here (including GPL/AGPL/LGPL
+# copyleft licenses, which are deliberately omitted) is denied by default.
+allow = [
+	"CC0-1.0",
+	"MIT",
+	"Apache-2.0",
+	"Apache-2.0 WITH LLVM-exception",
+	"BSD-2-Clause",
+	"BSD-3-Clause",
+	"ISC",
+	"Zlib",
+	"Unicode-3.0",
+	"Unlicense",
+	"MPL-2.0",
+	# NCSA (libfuzzer-sys, via rav1e/ravif/image/fastembed): permissive,
+	# OSI-approved.
+	"NCSA",
+	# CDLA-Permissive-2.0 (webpki-root-certs / webpki-roots): permissive
+	# data license for root cert bundles.
+	"CDLA-Permissive-2.0",
+	# BSL-1.0 (xxhash-rust): permissive Boost license.
+	"BSL-1.0",
+]
+confidence-threshold = 0.8
+exceptions = [
+	# webpki / rustls-webpki uses ISC-like license
+	{ crate = "rustls-webpki", allow = ["ISC"] },
+	# unicode-ident uses Unicode-3.0
+	{ crate = "unicode-ident", allow = ["Unicode-3.0"] },
+]
+
+[bans]
+multiple-versions = "warn"
+deny = []
+skip = []
+skip-tree = [
+	# headroom-core is vendored; its dep tree is under our control, but
+	# cargo-deny doesn't track "vendored" as a source distinction. Skip
+	# tree checks for it so we don't double-count its internal dev-deps.
+	# Published package name is aphrodite-headroom-core (see
+	# vendor/headroom/crates/headroom-core/Cargo.toml).
+	{ name = "aphrodite-headroom-core", version = "*" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,0 +1,19 @@
+# GitGuardian configuration for Aphrodite
+# Detects secrets, API keys, tokens, and other sensitive data
+# in the git history before they reach a remote.
+#
+# Install: pip install ggshield
+# Run:     ggshield secret scan pre-commit
+
+version: 2
+
+secret:
+  ignored_paths:
+    - tests/fixtures/
+    - tests/parity/fixtures/
+    - vendor/headroom/tests/
+    - vendor/
+
+  ignored_detectors:
+    - jwt
+    - generic-key
